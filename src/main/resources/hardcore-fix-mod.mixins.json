@@ -1,0 +1,15 @@
+{
+	"required": true,
+	"package": "com.tea_leaf_fox.hardcorefix.mixin",
+	"compatibilityLevel": "JAVA_21",
+	"mixins": [
+		"MinecraftServerAccessor",
+		"ShutdownMixin"
+	],
+	"client": [
+		"OpenToLanScreenMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}
