@@ -10,8 +10,8 @@ import java.util.Arrays;
 
 public class HardcoreTimeManager {
     private static final byte[] KEY = "TimeFoxTeaLeaf2024!Secure".getBytes();
-    private static final String EXTERNAL_FILE = "hardcore_time_check.dat";   // 外部（游戏目录下）
-    private static final String INTERNAL_FILE = "hardcore_time.dat";         // 存档文件夹内
+    private static final String EXTERNAL_FILE = "hardcore_time_check.dat";
+    private static final String INTERNAL_FILE = "hardcore_time.dat";
 
     private static SecretKeySpec getKeySpec() throws Exception {
         MessageDigest sha = MessageDigest.getInstance("SHA-256");
@@ -19,12 +19,10 @@ public class HardcoreTimeManager {
         return new SecretKeySpec(Arrays.copyOf(key, 16), "AES");
     }
 
-    // 获取外部文件路径（游戏当前工作目录，通常为 .minecraft 或 run/）
     private static Path getExternalPath() {
         return Paths.get(EXTERNAL_FILE);
     }
 
-    // 获取世界目录
     private static Path getWorldDir(ServerWorld world) {
         try {
             return ((com.tea_leaf_fox.hardcorefix.mixin.MinecraftServerAccessor) world.getServer())
@@ -36,25 +34,29 @@ public class HardcoreTimeManager {
     }
 
     /**
-     * 退出时调用：同时写入内部和外部时间戳
+     * 保存时间戳：外部文件和内部文件都只记录世界ID + 游戏时间
      */
     public static void saveTime(ServerWorld world) {
         if (!world.getServer().isHardcore()) return;
         Path worldDir = getWorldDir(world);
         if (worldDir == null) return;
-        long time = world.getTime();
+
+        long gameTime = world.getTime();
+        String worldId = worldDir.getFileName().toString();
 
         try {
-            String worldId = worldDir.getFileName().toString();
-            String data = worldId + "|" + time;
             Cipher cipher = Cipher.getInstance("AES");
             cipher.init(Cipher.ENCRYPT_MODE, getKeySpec());
+
+            String data = worldId + "|" + gameTime;
             byte[] encrypted = cipher.doFinal(data.getBytes("UTF-8"));
 
-            // 写入外部文件
+            // 写入外部文件（游戏根目录）
             Files.write(getExternalPath(), encrypted);
-            // 写入存档内部文件
+            // 写入内部文件（存档文件夹内）
             Files.write(worldDir.resolve(INTERNAL_FILE), encrypted);
+
+            System.out.println("[真正的极限模式] 时间戳已保存: 世界=" + worldId + ", 游戏时间=" + gameTime);
         } catch (Exception e) {
             System.err.println("[真正的极限模式] 写入时间戳失败！");
             e.printStackTrace();
@@ -62,41 +64,48 @@ public class HardcoreTimeManager {
     }
 
     /**
-     * 客户端解密前调用：检查是否存在回滚
-     * @return true 表示正常，false 表示回滚
+     * 回滚检测：外部游戏时间 > 内部游戏时间 → 回滚
      */
     public static boolean isRollback(Path worldDir) {
         Path internalFile = worldDir.resolve(INTERNAL_FILE);
         Path externalFile = getExternalPath();
         if (!Files.exists(internalFile) || !Files.exists(externalFile)) {
-            // 缺少任一文件，无法判断，放行
+            System.out.println("[真正的极限模式] 回滚检测: 缺少文件 (内部=" + Files.exists(internalFile) + ", 外部=" + Files.exists(externalFile) + ")");
             return false;
         }
 
         try {
-            byte[] internalData = Files.readAllBytes(internalFile);
-            byte[] externalData = Files.readAllBytes(externalFile);
+            byte[] extData = Files.readAllBytes(externalFile);
+            byte[] intData = Files.readAllBytes(internalFile);
 
             Cipher cipher = Cipher.getInstance("AES");
             cipher.init(Cipher.DECRYPT_MODE, getKeySpec());
-            String internalStr = new String(cipher.doFinal(internalData), "UTF-8");
-            String externalStr = new String(cipher.doFinal(externalData), "UTF-8");
+            String extStr = new String(cipher.doFinal(extData), "UTF-8");
+            String intStr = new String(cipher.doFinal(intData), "UTF-8");
 
-            String[] intParts = internalStr.split("\\|");
-            String[] extParts = externalStr.split("\\|");
-            if (intParts.length != 2 || extParts.length != 2) return false;
+            String[] extParts = extStr.split("\\|");
+            String[] intParts = intStr.split("\\|");
+            if (extParts.length != 2 || intParts.length != 2) {
+                System.out.println("[真正的极限模式] 回滚检测: 数据格式错误");
+                return false;
+            }
+
+            String extWorldId = extParts[0];
+            long extGameTime = Long.parseLong(extParts[1]);
 
             String intWorldId = intParts[0];
-            long intTime = Long.parseLong(intParts[1]);
-            String extWorldId = extParts[0];
-            long extTime = Long.parseLong(extParts[1]);
+            long intGameTime = Long.parseLong(intParts[1]);
 
-            // 世界名必须一致，且外部时间严格大于内部时间，说明外部记录更新，内部是旧备份
-            if (intWorldId.equals(extWorldId) && extTime > intTime) {
-                System.err.println("[真正的极限模式] 检测到回滚！内部时间:" + intTime + " 外部时间:" + extTime);
+            System.out.println("[真正的极限模式] 回滚检测: 外部时间=" + extGameTime + ", 内部时间=" + intGameTime + ", 世界=" + extWorldId);
+
+            // 世界名必须相同，且外部游戏时间严格大于内部游戏时间
+            if (extWorldId.equals(intWorldId) && extGameTime > intGameTime) {
+                System.out.println("[真正的极限模式] 检测到回滚！");
                 return true;
+            } else {
+                System.out.println("[真正的极限模式] 未检测到回滚。");
+                return false;
             }
-            return false;
         } catch (Exception e) {
             System.err.println("[真正的极限模式] 回滚检测异常，放行。");
             e.printStackTrace();
